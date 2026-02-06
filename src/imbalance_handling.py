@@ -1,12 +1,12 @@
-import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import confusion_matrix
-from xgboost import XGBClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report, roc_auc_score
 
 df = pd.read_csv(
     r"C:\Users\bumik\OneDrive\Documents\New folder (2)\fraud-detection-system\data\raw\creditcard.csv"
 )
+
 
 X = df.drop("Class", axis=1)
 y = df["Class"]
@@ -18,53 +18,43 @@ X_train, X_test, y_train, y_test = train_test_split(
     stratify=y
 )
 
-# Train XGBoost
-fraud_count = y_train.sum()
-non_fraud_count = len(y_train) - fraud_count
-scale_pos_weight = non_fraud_count / fraud_count
+# Logistic Regression with class weight
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 
-xgb = XGBClassifier(
-    n_estimators=200,
-    max_depth=4,
-    learning_rate=0.1,
-    subsample=0.8,
-    colsample_bytree=0.8,
-    scale_pos_weight=scale_pos_weight,
-    objective="binary:logistic",
-    eval_metric="auc",
-    random_state=42,
-    n_jobs=-1
-)
+pipeline = Pipeline([
+    ("scaler", StandardScaler()),
+    ("model", LogisticRegression(
+        max_iter=2000,
+        class_weight={0: 1, 1: 10}
+    ))
+])
 
-xgb.fit(X_train, y_train)
+pipeline.fit(X_train, y_train)
 
-# Probabilities
-y_prob = xgb.predict_proba(X_test)[:, 1]
+y_pred = pipeline.predict(X_test)
+y_prob = pipeline.predict_proba(X_test)[:, 1]
 
-COST_FN = 10000  # fraud missed
-COST_FP = 200    # genuine blocked
 
-def business_cost(y_true, y_pred):
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-    return fn * COST_FN + fp * COST_FP
+print("Weighted Logistic Regression")
+print(classification_report(y_test, y_pred))
+print("ROC-AUC:", roc_auc_score(y_test, y_prob))
 
-thresholds = np.arange(0.01, 0.99, 0.01)
-costs = []
+from imblearn.over_sampling import SMOTE
 
-for t in thresholds:
-    y_pred_t = (y_prob >= t).astype(int)
-    cost = business_cost(y_test, y_pred_t)
-    costs.append(cost)
+smote = SMOTE(random_state=42)
 
-best_threshold = thresholds[np.argmin(costs)]
-min_cost = min(costs)
+X_train_smote, y_train_smote = smote.fit_resample(X_train, y_train)
 
-print("Best Threshold:", best_threshold)
-print("Minimum Business Cost: ₹", min_cost)
+print("Before SMOTE:", y_train.value_counts())
+print("After SMOTE:", y_train_smote.value_counts())
 
-default_pred = (y_prob >= 0.5).astype(int)
-default_cost = business_cost(y_test, default_pred)
+lr_smote = LogisticRegression(max_iter=1000)
+lr_smote.fit(X_train_smote, y_train_smote)
 
-print("Cost @ 0.5 threshold: ₹", default_cost)
-print("Cost @ optimal threshold: ₹", min_cost)
+y_pred_smote = lr_smote.predict(X_test)
+y_prob_smote = lr_smote.predict_proba(X_test)[:, 1]
 
+print("SMOTE Logistic Regression")
+print(classification_report(y_test, y_pred_smote))
+print("ROC-AUC:", roc_auc_score(y_test, y_prob_smote))
