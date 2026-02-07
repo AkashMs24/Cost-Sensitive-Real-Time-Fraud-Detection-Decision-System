@@ -22,10 +22,8 @@ st.info(
 
 import os
 
-API_URL = os.getenv(
-    "FRAUD_API_URL",
-    "http://127.0.0.1:8000/predict_fraud"
-)
+API_URL = "https://fraud-detection-system-2-7ake.onrender.com/predict_fraud"
+
 
 
 # ---------------------------
