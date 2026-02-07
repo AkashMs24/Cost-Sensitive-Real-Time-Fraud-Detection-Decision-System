@@ -20,7 +20,13 @@ st.info(
     "Random or zeroed PCA inputs may produce extreme risk scores."
 )
 
-API_URL = "http://127.0.0.1:8000/predict_fraud"
+import os
+
+API_URL = os.getenv(
+    "FRAUD_API_URL",
+    "http://127.0.0.1:8000/predict_fraud"
+)
+
 
 # ---------------------------
 # Input form
