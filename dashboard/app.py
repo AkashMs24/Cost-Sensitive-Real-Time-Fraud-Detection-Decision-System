@@ -1,3 +1,5 @@
+st.info("⚠️ Use realistic transaction values. Random or zeroed PCA inputs may produce extreme risk scores.")
+
 if submit:
     payload = {
         "Time": Time,
