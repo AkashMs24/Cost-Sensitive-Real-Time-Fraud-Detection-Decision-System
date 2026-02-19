@@ -13,7 +13,7 @@ Interactive Swagger Documentation:
 👉 https://fraud-detection-system-2-7ake.onrender.com/docs
 
 Streamlit Dashboard (Analyst Demo – Optional UI):
-👉 https://fraud-detection-system-o9s4mqdukjhr5cghkqcasv.streamlit.app/
+👉 https://cost-sensitive-real-time-fraud-detection-decision-system-erhna.streamlit.app/
 (Analyst-facing demonstration layer; not the core system)
 
 ⚠️ The FastAPI service is the core fraud decision engine.
@@ -188,4 +188,5 @@ Deployment-ready engineering
 
 v1.0 • Portfolio Demonstration Project
 Built by Akash M S
+
 
