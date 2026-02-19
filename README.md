@@ -1,4 +1,4 @@
-🚨 Fraud Detection Decision System
+🚨Cost-Sensitive-Real-Time-Fraud-Detection-Decision-System
 
 An end-to-end fraud detection decision system that mirrors how real financial institutions detect, evaluate, and act on fraudulent transactions.
 
@@ -188,5 +188,6 @@ Deployment-ready engineering
 
 v1.0 • Portfolio Demonstration Project
 Built by Akash M S
+
 
 
