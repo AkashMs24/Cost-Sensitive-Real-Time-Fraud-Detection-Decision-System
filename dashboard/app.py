@@ -6,7 +6,7 @@ import os
 # Page config
 # ---------------------------
 st.set_page_config(
-    page_title="Cost-Sensitive-Real-Time-Fraud-Detection-Decision-System",
+    page_title="Cost-Sensitive Real-Time Fraud Detection Decision System",
     layout="centered"
 )
 
