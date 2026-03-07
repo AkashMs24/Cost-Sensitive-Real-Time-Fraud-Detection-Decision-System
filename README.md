@@ -5,7 +5,6 @@ An end-to-end fraud detection decision system that mirrors how real financial in
 This project goes beyond model accuracy and focuses on business-aware decision-making under extreme class imbalance, explainability, and production-ready deployment.
 
 🔗 Live Demo & API
-
 Backend API (FastAPI – deployed on Render):
 👉 https://fraud-detection-system-2-7ake.onrender.com
 
@@ -188,6 +187,7 @@ Deployment-ready engineering
 
 v1.0 • Portfolio Demonstration Project
 Built by Akash M S
+
 
 
 
