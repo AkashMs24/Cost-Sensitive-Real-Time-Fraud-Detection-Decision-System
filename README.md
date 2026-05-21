@@ -1,193 +1,174 @@
-🚨Cost-Sensitive-Real-Time-Fraud-Detection-Decision-System
+<div align="center">
 
-An end-to-end fraud detection decision system that mirrors how real financial institutions detect, evaluate, and act on fraudulent transactions.
+# Cost-Sensitive Real-Time Fraud Detection System
 
-This project goes beyond model accuracy and focuses on business-aware decision-making under extreme class imbalance, explainability, and production-ready deployment.
+### Because missing one fraud costs ₹10,000. Blocking one genuine user costs ₹200. The threshold matters.
 
-🔗 Live Demo & API
-Backend API (FastAPI – deployed on Render):
-👉 https://fraud-detection-system-2-7ake.onrender.com
+[![FastAPI](https://img.shields.io/badge/Core%20API-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fraud-detection-system-2-7ake.onrender.com)
+[![Swagger Docs](https://img.shields.io/badge/API%20Docs-Swagger-85EA2D?style=flat-square&logo=swagger&logoColor=black)](https://fraud-detection-system-2-7ake.onrender.com/docs)
+[![Streamlit](https://img.shields.io/badge/Analyst%20UI-Streamlit-FF4B4B?style=flat-square&logo=streamlit&logoColor=white)](https://cost-sensitive-real-time-fraud-detection-decision-system-erhna.streamlit.app/)
+![XAI](https://img.shields.io/badge/XAI-SHAP-orange?style=flat-square)
+![Python](https://img.shields.io/badge/Python-3.9+-blue?style=flat-square)
 
-Interactive Swagger Documentation:
-👉 https://fraud-detection-system-2-7ake.onrender.com/docs
+</div>
 
-Streamlit Dashboard (Analyst Demo – Optional UI):
-👉 https://cost-sensitive-real-time-fraud-detection-decision-system-erhna.streamlit.app/
-(Analyst-facing demonstration layer; not the core system)
+---
 
-⚠️ The FastAPI service is the core fraud decision engine.
-The Streamlit app is an optional demo/analyst interface built on top of the API.
+## This is not a fraud classifier. It is a fraud decision engine.
 
-🧠 Problem Framing (Why This Project Is Different)
+Most fraud detection projects optimize for accuracy on an imbalanced dataset.  
+That is the wrong objective.
 
-Fraud detection is not a prediction problem — it is a decision problem.
+Fraud is rare (~0.17% of transactions). A model that predicts "not fraud" every single time achieves **99.83% accuracy** — and is completely useless.
 
-Fraud is extremely rare (~0.17%)
+The real problem is a **cost trade-off:**
 
-Missing fraud → direct financial loss
+| Decision error | Business cost |
+|---|---|
+| Fraud missed (False Negative) | ₹10,000 direct loss |
+| Genuine user blocked (False Positive) | ₹200 + customer dissatisfaction |
 
-Blocking genuine users → customer dissatisfaction
+This system optimizes the **decision threshold** to minimize total expected business cost — not classification error.
 
-Accuracy alone is misleading and dangerous
+---
 
-🎯 Goal
-
-Minimize total business cost while maintaining customer trust — not maximize accuracy.
-
-📊 Dataset
-
-Credit Card Fraud Dataset (UCI / Kaggle)
-
-284,807 transactions
-
-492 fraud cases (~0.17%)
-
-PCA-anonymized features for privacy compliance
-
-The dataset is not included in this repository.
-
-🏗️ System Architecture
+## How it works
 Transaction Input
-        ↓
+↓
 Feature Processing
-        ↓
-Imbalance-Aware ML Models
-        ↓
-Fraud Probability
-        ↓
-Cost-Optimized Threshold
-        ↓
-Decision (ALLOW / REVIEW / BLOCK)
-        ↓
-Explainability (SHAP)
-        ↓
-FastAPI Endpoint (Deployed)
+↓
+Imbalance-Aware ML Models (XGBoost / Random Forest / Logistic Regression)
+↓
+Fraud Probability Score
+↓
+Cost-Optimized Decision Threshold  ← the key differentiator
+↓
+Decision: ALLOW / REVIEW / BLOCK
+↓
+SHAP Explanation (why this transaction was flagged)
+↓
+FastAPI Endpoint (deployed on Render)
 
-🤖 Models Implemented
-Model	Purpose
-Logistic Regression	Baseline
-Weighted Logistic Regression	Cost-sensitive baseline
-Random Forest	Conservative, high precision
-XGBoost	Best recall–precision balance
-Isolation Forest	Novel / emerging fraud detection
-⚖️ Handling Class Imbalance
+---
 
-Techniques used:
+## API — the core system
 
-Class weighting
-
-SMOTE (for experimentation)
-
-Imbalance-aware tree models
-
-Threshold tuning (instead of label tuning)
-
-💰 Business Cost Optimization
-
-Instead of using a fixed 0.5 threshold, the decision threshold is optimized using business cost:
-
-Outcome	Cost
-Fraud missed (False Negative)	₹10,000
-Genuine blocked (False Positive)	₹200
-
-The selected threshold minimizes expected total cost, not classification error.
-
-🔍 Explainability (SHAP)
-
-Global explanations: Identify key fraud-driving features
-
-Local explanations: Explain why a specific transaction was flagged
-
-Makes the system suitable for regulated financial environments
-
-⚙️ API Usage (FastAPI)
-Endpoint
+```bash
 POST /predict_fraud
+```
 
-Sample Request
+**Request:**
+```json
 {
   "Time": 0,
   "Amount": 52000,
   "V1": 0.01,
   "V2": -0.03,
-  "...": "...",
   "V28": 0.14
 }
+```
 
-Sample Response
+**Response:**
+```json
 {
   "fraud_probability": 0.87,
   "risk_level": "HIGH RISK",
   "decision": "BLOCK"
 }
+```
 
-🌐 Deployment
+The Streamlit app is an **optional analyst interface** built on top of this API.  
+The FastAPI service is the core engine — production-first, UI-optional.
 
-Backend: FastAPI deployed on Render
+---
 
-Docs: Swagger UI available publicly
+## Dataset
 
-UI: Streamlit used as an optional analyst demo
+- Credit Card Fraud Dataset (UCI / Kaggle)
+- 284,807 transactions · 492 fraud cases · 0.17% fraud rate
+- PCA-anonymized features for privacy compliance
+- Dataset not included in this repo
 
-Architecture: API-first, decoupled UI
+---
 
-🧠 Key Design Decisions
+## Models
 
-API-first design to reflect real fraud systems
+| Model | Role |
+|---|---|
+| Logistic Regression | Baseline |
+| Weighted Logistic Regression | Cost-sensitive baseline |
+| Random Forest | High precision, conservative decisions |
+| XGBoost | Best recall–precision balance — primary model |
+| Isolation Forest | Unsupervised, novel fraud pattern detection |
 
-Optimized decisions using business cost, not accuracy
+---
 
-Used SHAP for transparency and auditability
+## Handling class imbalance
 
-Treated UI as optional, not core system logic
+- Class weighting on all models
+- SMOTE for experimentation
+- Imbalance-aware tree configurations
+- **Threshold tuning over label tuning** — the decision boundary is moved, not the data
 
-🛠 Tech Stack
+---
 
-Python
+## Explainability (SHAP)
 
-Pandas, NumPy
+- Global explanations — which features drive fraud across the dataset
+- Local explanations — why *this specific transaction* was flagged
+- Audit-ready output for regulated financial environments
 
-Scikit-learn
+---
 
-XGBoost
+## Key design decisions
 
-Imbalanced-learn
+**API-first, not dashboard-first** — real fraud systems are APIs consumed by banking infrastructure, not Streamlit apps. The UI is a demo layer.
 
-SHAP
+**Cost optimization over accuracy** — the threshold is selected by minimizing ₹ expected loss, not F1 score.
 
-FastAPI
+**SHAP for every decision** — a fraud system without explainability cannot be deployed in regulated environments. Every BLOCK decision is justified.
 
-Streamlit
+**Decoupled architecture** — training pipeline, inference API, and analyst UI are fully separated.
 
-Render (deployment)
+---
 
-🔮 Limitations & Future Improvements
+## Stack
 
-Real-time feature generation (velocity, device fingerprinting)
+`Python` `XGBoost` `scikit-learn` `imbalanced-learn` `SHAP` `FastAPI` `Streamlit` `Render`
 
-Concept drift detection and automated retraining
+---
 
-Streaming integration (Kafka)
+## Run locally
 
-Role-based dashboards for fraud analysts
+```bash
+git clone https://github.com/AkashMs24/Cost-Sensitive-Real-Time-Fraud-Detection-Decision-System.git
+cd Cost-Sensitive-Real-Time-Fraud-Detection-Decision-System
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
 
-📌 Key Takeaway
+---
 
-This project demonstrates real-world ML maturity by focusing on:
+## What's next
 
-Decision systems, not just models
+- Real-time velocity features (transaction frequency, device fingerprinting)
+- Concept drift detection + automated retraining
+- Kafka streaming integration
+- Role-based analyst dashboards
 
-Business trade-offs under uncertainty
+---
 
-Explainability and compliance
+## Related projects
 
-Deployment-ready engineering
+- [Decision Intelligence System](https://github.com/AkashMs24/Decisioniq-ai-business-intelligence) — ML + LLM business intelligence platform
+- [Employee Attrition XAI](https://github.com/AkashMs24/Employee-Attrition-Risk-Assessment-Using-Explainable-Machine-Learning) — SHAP-powered HR risk scoring
+- [FarmVoice AI](https://github.com/AkashMs24/FarmVoice-AI) — NLP + SHAP crop advisory
 
-🏷️ Version
+---
 
-v1.0 • Portfolio Demonstration Project
-Built by Akash M S
+<div align="center">
 
+Built by **Akash M S** · Presidency University, Bengaluru  
+[LinkedIn](https://www.linkedin.com/in/akash-m-s-414a21297) · [GitHub](https://github.com/AkashMs24) · ms29akash@gmail.com
 
-
-
+</div>
