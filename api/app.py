@@ -1,9 +1,20 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-import numpy as np
+import joblib
+import pandas as pd
+import os
 
-app = FastAPI(title="Cost-Sensitive-Real-Time-Fraud-Detection-Decision-System
- API")
+app = FastAPI(title="Cost-Sensitive Real-Time Fraud Detection Decision System API")
+
+# Load the real trained model + threshold ONCE when the server starts
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "fraud_model.pkl")
+THRESHOLD_PATH = os.path.join(os.path.dirname(__file__), "threshold.txt")
+
+model = joblib.load(MODEL_PATH)
+with open(THRESHOLD_PATH) as f:
+    THRESHOLD = float(f.read().strip())
+
+FEATURE_ORDER = ["Time", "Amount"] + [f"V{i}" for i in range(1, 29)]
 
 class Transaction(BaseModel):
     Time: float
@@ -43,17 +54,25 @@ def health_check():
 
 @app.post("/predict_fraud")
 def predict_fraud(txn: Transaction):
-    # Dummy logic (replace with model later)
-    risk_score = min(1.0, txn.Amount / 5000)
+    # Build a single-row dataframe in the exact column order the model expects
+    row = pd.DataFrame([{field: getattr(txn, field) for field in FEATURE_ORDER}])
 
-    if risk_score > 0.7:
-        decision = "HIGH RISK"
-    elif risk_score > 0.4:
-        decision = "MEDIUM RISK"
+    # REAL model prediction (not a guess anymore)
+    fraud_probability = float(model.predict_proba(row)[:, 1][0])
+
+    # REAL cost-optimized decision (not a hardcoded 0.7/0.4 split)
+    if fraud_probability >= THRESHOLD:
+        decision = "BLOCK"
+        risk_level = "HIGH RISK"
+    elif fraud_probability >= THRESHOLD * 0.5:
+        decision = "REVIEW"
+        risk_level = "MEDIUM RISK"
     else:
-        decision = "LOW RISK"
+        decision = "ALLOW"
+        risk_level = "LOW RISK"
 
     return {
-        "fraud_probability": round(risk_score, 3),
-        "risk_level": decision
+        "fraud_probability": round(fraud_probability, 4),
+        "risk_level": risk_level,
+        "decision": decision
     }
