@@ -1,12 +1,13 @@
 fastapi
-uvicorn
+uvicorn[standard]
 pandas
 numpy
 scikit-learn
 xgboost
 imbalanced-learn
 shap
+networkx
 streamlit>=1.32.0
 requests
+joblib
 altair==4.2.2
-
