@@ -7,9 +7,9 @@ import os
 # ==============================
 
 st.set_page_config(
-    page_title="FraudShield — Real-Time Detection",
+    page_title="FraudShield — Cost-Sensitive Fraud Decisioning",
     page_icon="💳",
-    layout="centered",
+    layout="wide",
 )
 
 # ==============================
@@ -43,7 +43,7 @@ st.markdown("""
     /* Main container */
     .main .block-container {
         background: var(--bg);
-        max-width: 860px;
+        max-width: 1100px;
         padding: clamp(1rem, 4vw, 2.5rem);
     }
 
@@ -286,89 +286,101 @@ st.markdown("""
 
 st.markdown("""
 <div class="hero">
-    <div class="hero-badge">Real-Time · Cost-Sensitive · ML-Powered</div>
+    <div class="hero-badge">Real-Time · Cost-Sensitive · Graph-Aware · Adaptive</div>
     <div class="hero-title">Fraud<span>Shield</span></div>
-    <p class="hero-sub">Enter transaction details to assess fraud risk in real time</p>
+    <p class="hero-sub">Cost-sensitive decisioning, fraud-ring graphs, drift monitoring, and an LLM investigation copilot</p>
 </div>
 """, unsafe_allow_html=True)
 
 # ==============================
-# INFO NOTE  (original logic untouched)
+# API ENDPOINT
 # ==============================
 
-st.info("⚠️ Use realistic transaction values. Random or zeroed PCA inputs may produce extreme risk scores.")
+API_URL = os.environ.get("FRAUD_API_URL", "http://127.0.0.1:8000")
 
-# ==============================
-# API ENDPOINT  (original logic untouched)
-# ==============================
-
-API_URL = "https://fraud-detection-system-2-7ake.onrender.com/predict_fraud"
-
-# ==============================
-# INPUT FORM
-# ==============================
-
-st.markdown("<div class='section-label'>Transaction Details</div>", unsafe_allow_html=True)
-
-with st.form("fraud_form"):
-
-    col_t, col_a = st.columns(2)
-    with col_t:
-        Time = st.number_input("Time", value=0.0, format="%.2f")
-    with col_a:
-        Amount = st.number_input("Amount (₹ / $)", value=0.0, format="%.2f")
-
-    st.markdown("<div class='section-label' style='margin-top:1.5rem;'>PCA Features — V1 to V28</div>", unsafe_allow_html=True)
-
-    features = {}
-    cols = st.columns(4)
-    for i in range(1, 29):
-        with cols[(i - 1) % 4]:
-            features[f"V{i}"] = st.number_input(f"V{i}", value=0.0, format="%.4f")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    submit = st.form_submit_button("💳 Analyze Transaction")
-
-# ==============================
-# PREDICTION LOGIC  (original logic untouched)
-# ==============================
-
-if submit:
-    payload = {"Time": Time, "Amount": Amount, **features}
-
+def api_get(path, **params):
     try:
-        response = requests.post(API_URL, json=payload)
+        r = requests.get(f"{API_URL}{path}", params=params, timeout=8)
+        r.raise_for_status()
+        return r.json(), None
+    except Exception as e:
+        return None, str(e)
 
-        if response.status_code != 200:
-            st.error("❌ API error. Ensure FastAPI backend is running.")
+def api_post(path, payload=None):
+    try:
+        r = requests.post(f"{API_URL}{path}", json=payload or {}, timeout=15)
+        r.raise_for_status()
+        return r.json(), None
+    except Exception as e:
+        return None, str(e)
+
+health, health_err = api_get("/")
+if health_err:
+    st.error(f"⚠️ Can't reach the API at {API_URL}. Start it with `uvicorn api.app:app --reload`, or set FRAUD_API_URL. ({health_err})")
+else:
+    c1, c2, c3 = st.columns(3)
+    c1.metric("API Status", "Online")
+    c2.metric("Current Threshold", f"{health['current_threshold']:.3f}")
+    c3.metric("Transactions Processed", health["n_transactions_processed"])
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+tab_predict, tab_rings, tab_drift, tab_threshold, tab_investigate = st.tabs(
+    ["💳 Predict", "🕸️ Fraud Rings", "📉 Drift Monitor", "🎯 Adaptive Threshold", "🧑‍💼 Investigate"]
+)
+
+# ==============================
+# TAB 1 — PREDICT
+# ==============================
+with tab_predict:
+    st.info("⚠️ Use realistic transaction values. Random or zeroed PCA inputs may produce extreme risk scores.")
+    st.markdown("<div class='section-label'>Transaction Details</div>", unsafe_allow_html=True)
+
+    with st.form("fraud_form"):
+        col_t, col_a = st.columns(2)
+        with col_t:
+            Time = st.number_input("Time", value=0.0, format="%.2f")
+        with col_a:
+            Amount = st.number_input("Amount (₹ / $)", value=0.0, format="%.2f")
+
+        col_acc, col_dev, col_mer = st.columns(3)
+        with col_acc:
+            account_id = st.text_input("Account ID", value="ACC100001")
+        with col_dev:
+            device_id = st.text_input("Device ID", value="DEV1001")
+        with col_mer:
+            merchant_id = st.text_input("Merchant ID", value="MER1")
+
+        st.markdown("<div class='section-label' style='margin-top:1.5rem;'>PCA Features — V1 to V28</div>", unsafe_allow_html=True)
+
+        features = {}
+        cols = st.columns(4)
+        for i in range(1, 29):
+            with cols[(i - 1) % 4]:
+                features[f"V{i}"] = st.number_input(f"V{i}", value=0.0, format="%.4f")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        submit = st.form_submit_button("💳 Analyze Transaction")
+
+    if submit:
+        payload = {
+            "Time": Time, "Amount": Amount,
+            "account_id": account_id, "device_id": device_id, "merchant_id": merchant_id,
+            **features,
+        }
+        result, err = api_post("/predict_fraud", payload)
+
+        if err:
+            st.error(f"❌ API call failed: {err}")
         else:
-            result = response.json()
-            risk   = result["risk_level"]
-            prob   = float(result["fraud_probability"])
+            st.session_state["last_transaction_id"] = result["transaction_id"]
+            decision = result["decision"]
+            prob = float(result["fraud_probability"])
 
-            # Business decision mapping (original logic)
-            if risk == "HIGH RISK":
-                decision = "BLOCK"
-            elif risk == "MEDIUM RISK":
-                decision = "REVIEW"
-            else:
-                decision = "ALLOW"
-
-            # ── Result UI ─────────────────────────────────────────────────
             st.markdown("<hr>", unsafe_allow_html=True)
 
-            # Score + decision pill
-            score_color = {
-                "BLOCK":  "#ff4444",
-                "REVIEW": "#ffb800",
-                "ALLOW":  "#00e676",
-            }.get(decision, "#c8ff00")
-
-            pill_class = {
-                "BLOCK":  "pill-block",
-                "REVIEW": "pill-review",
-                "ALLOW":  "pill-allow",
-            }.get(decision, "pill-allow")
+            score_color = {"BLOCK": "#ff4444", "REVIEW": "#ffb800", "ALLOW": "#00e676"}.get(decision, "#c8ff00")
+            pill_class = {"BLOCK": "pill-block", "REVIEW": "pill-review", "ALLOW": "pill-allow"}.get(decision, "pill-allow")
 
             st.markdown(f"""
             <div style='text-align:center; padding: 1.5rem 0 1rem;'>
@@ -380,74 +392,42 @@ if submit:
             </div>
             """, unsafe_allow_html=True)
 
-            # Progress bar
             st.progress(min(prob, 1.0))
-
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # Metrics row
             c1, c2, c3 = st.columns(3)
             c1.metric("Fraud Probability", f"{prob:.4f}")
-            c2.metric("Risk Level",        risk)
-            c3.metric("Final Decision",    decision)
+            c2.metric("Risk Level", result["risk_level"])
+            c3.metric("Threshold Used", f"{result['threshold_used']:.3f}")
 
-            st.markdown("<br>", unsafe_allow_html=True)
-
-            # Decision card
-            if decision == "BLOCK":
-                st.markdown("""
-                <div class='card card-danger'>
-                    <div style='font-family:Syne,sans-serif; font-weight:700; font-size:1rem; color:#ff6b6b; margin-bottom:0.4rem;'>
-                        🚨 High Risk Transaction
-                    </div>
-                    <div style='font-size:0.88rem; color:#aaa; line-height:1.6;'>
-                        This transaction exhibits strong fraud signals. It should be <strong style='color:#ff6b6b;'>blocked immediately</strong> and flagged for investigation.
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            elif decision == "REVIEW":
-                st.markdown("""
-                <div class='card card-warn'>
-                    <div style='font-family:Syne,sans-serif; font-weight:700; font-size:1rem; color:#ffcc44; margin-bottom:0.4rem;'>
-                        ⚠️ Medium Risk — Manual Review Required
-                    </div>
-                    <div style='font-size:0.88rem; color:#aaa; line-height:1.6;'>
-                        Transaction shows moderate fraud signals. Recommend <strong style='color:#ffcc44;'>manual review</strong> or step-up authentication before processing.
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            else:
-                st.markdown("""
-                <div class='card card-ok'>
-                    <div style='font-family:Syne,sans-serif; font-weight:700; font-size:1rem; color:#00e676; margin-bottom:0.4rem;'>
-                        ✅ Low Risk — Transaction Safe
-                    </div>
-                    <div style='font-size:0.88rem; color:#aaa; line-height:1.6;'>
-                        No significant fraud indicators detected. Transaction can be <strong style='color:#00e676;'>safely allowed</strong>.
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+            st.markdown("<div class='section-label'>Top SHAP Drivers</div>", unsafe_allow_html=True)
+            for feat in result["top_features"]:
+                arrow = "🔺" if feat["direction"] == "toward_fraud" else "🔻"
+                st.markdown(
+                    f"<div class='card' style='padding:0.7rem 1rem; margin-bottom:0.4rem;'>"
+                    f"{arrow} <strong>{feat['feature']}</strong> = {feat['value']:.3f} "
+                    f"&nbsp;·&nbsp; impact <code>{feat['shap_value']:+.4f}</code></div>",
+                    unsafe_allow_html=True,
+                )
 
             st.caption(
-                "Prediction served by a FastAPI backend. "
-                "Decision thresholds are optimized based on business cost trade-offs."
+                f"Transaction ID: {result['transaction_id']} — use the Investigate tab for an LLM-generated "
+                "case note, or submit ground-truth feedback once the outcome is known."
             )
 
-    except Exception as e:
-        st.error("❌ API call failed.")
-        st.write(e)
-
-# ==============================
-# FOOTER
-# ==============================
-
-st.markdown("""
-<hr>
-<div style='text-align:center; padding:1rem 0 0.5rem;'>
-    <div style='font-family:DM Mono,monospace; font-size:0.7rem; color:#333; letter-spacing:0.1em;'>
-        FRAUDSHIELD &nbsp;·&nbsp; v1.0 &nbsp;·&nbsp; Portfolio Demonstration &nbsp;·&nbsp; Built by Akash M S
-    </div>
-</div>
-""", unsafe_allow_html=True)
+    st.markdown("<div class='section-label'>Submit Ground-Truth Feedback</div>", unsafe_allow_html=True)
+    st.caption("When a transaction's real outcome becomes known (chargeback, confirmed fraud, cleared review), submit it here — it drives the adaptive threshold.")
+    fb_col1, fb_col2, fb_col3 = st.columns([2, 1, 1])
+    with fb_col1:
+        fb_txn_id = st.text_input("Transaction ID", value=st.session_state.get("last_transaction_id", ""))
+    with fb_col2:
+        fb_label = st.selectbox("True Outcome", ["Confirmed Fraud", "Confirmed Genuine"])
+    with fb_col3:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("Submit Feedback"):
+            true_label = 1 if fb_label == "Confirmed Fraud" else 0
+            res, err = api_post("/feedback", {"transaction_id": fb_txn_id, "true_label": true_label})
+            if err:
+                st.error(f"Failed: {err}")
+            else:
+                st.success(f"Threshold updated to {res['updated_threshold']:.4f}")
