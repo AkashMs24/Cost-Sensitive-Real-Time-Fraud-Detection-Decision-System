@@ -1,174 +1,153 @@
-<div align="center">
+# 🛡️ FraudShield — Cost-Sensitive Real-Time Fraud Detection & Decision System
 
-# Cost-Sensitive Real-Time Fraud Detection System
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit&logoColor=white)
+![XGBoost](https://img.shields.io/badge/XGBoost-Calibrated-EC1C24)
+![License](https://img.shields.io/badge/License-MIT-green)
 
-### Because missing one fraud costs ₹10,000. Blocking one genuine user costs ₹200. The threshold matters.
+**🔴 Live demo:** [Dashboard](https://cost-sensitive-real-time-fraud-detection-decision-system-erhna.streamlit.app/) · [API docs (Swagger)](https://fraud-detection-system-2-7ake.onrender.com/docs)
 
-[![FastAPI](https://img.shields.io/badge/Core%20API-FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fraud-detection-system-2-7ake.onrender.com)
-[![Swagger Docs](https://img.shields.io/badge/API%20Docs-Swagger-85EA2D?style=flat-square&logo=swagger&logoColor=black)](https://fraud-detection-system-2-7ake.onrender.com/docs)
-[![Streamlit](https://img.shields.io/badge/Analyst%20UI-Streamlit-FF4B4B?style=flat-square&logo=streamlit&logoColor=white)](https://cost-sensitive-real-time-fraud-detection-decision-system-erhna.streamlit.app/)
-![XAI](https://img.shields.io/badge/XAI-SHAP-orange?style=flat-square)
-![Python](https://img.shields.io/badge/Python-3.9+-blue?style=flat-square)
+> ⚠️ Both are deployed on free-tier hosting and spin down after inactivity — the first request after idle time can take ~50 seconds to wake up. That's expected.
 
-</div>
+A fraud-scoring system that goes beyond "train XGBoost, report AUC." It makes and *defends* real-time ALLOW / REVIEW / BLOCK decisions using business cost, adapts its own threshold online, detects organized fraud rings via graph analysis, monitors itself for data drift, and explains every decision in plain English via an LLM copilot.
 
----
+## Why this is different from the usual creditcard-fraud clone
 
-## This is not a fraud classifier. It is a fraud decision engine.
-
-Most fraud detection projects optimize for accuracy on an imbalanced dataset.  
-That is the wrong objective.
-
-Fraud is rare (~0.17% of transactions). A model that predicts "not fraud" every single time achieves **99.83% accuracy** — and is completely useless.
-
-The real problem is a **cost trade-off:**
-
-| Decision error | Business cost |
+| Most student projects | This project |
 |---|---|
-| Fraud missed (False Negative) | ₹10,000 direct loss |
-| Genuine user blocked (False Positive) | ₹200 + customer dissatisfaction |
+| One static threshold (0.5) chosen once | **Online-learning threshold** that adapts to feedback (Robbins-Monro stochastic approximation) |
+| Score transactions in isolation | **Graph-based fraud ring detection** across shared account/device/merchant |
+| Assume the model stays good forever | **PSI-based drift monitor** with an automatic retrain-recommended flag |
+| SHAP bar chart, then leave the analyst to interpret it | **LLM investigation copilot** that writes the analyst's case note |
+| Batch predictions in a notebook | **Live streaming simulator** hitting a real FastAPI service in real time |
 
-This system optimizes the **decision threshold** to minimize total expected business cost — not classification error.
+## Architecture
+Transaction --> FastAPI /predict_fraud --> Calibrated XGBoost --> fraud_probability
+|                                                  |
+|--> SHAP explainer (local feature attribution) <--|
+|--> AdaptiveThresholdEngine (current decision threshold)
+|--> FraudRingDetector (entity graph ingestion)
+|--> DriftMonitor (rolling PSI vs. training reference)
+|
+v
+ALLOW / REVIEW / BLOCK
+|
+ground truth arrives later -->  POST /feedback --> updates AdaptiveThresholdEngine
 
----
+## Features
 
-## How it works
-Transaction Input
-↓
-Feature Processing
-↓
-Imbalance-Aware ML Models (XGBoost / Random Forest / Logistic Regression)
-↓
-Fraud Probability Score
-↓
-Cost-Optimized Decision Threshold  ← the key differentiator
-↓
-Decision: ALLOW / REVIEW / BLOCK
-↓
-SHAP Explanation (why this transaction was flagged)
-↓
-FastAPI Endpoint (deployed on Render)
+1. **Cost-sensitive decisioning** (`src/cost_optimization.py`) — threshold chosen to minimize ₹ business cost (missed fraud vs. wrongly-blocked customer), not accuracy/F1.
+2. **Adaptive online threshold** (`src/adaptive_threshold.py`) — every time ground truth arrives via `/feedback`, the threshold takes a small Robbins-Monro step toward the cost-minimizing direction. Fully auditable: no black-box RL library, just a few lines of stochastic approximation.
+3. **Graph-based fraud ring detection** (`src/graph_rings.py`) — builds a graph linking transactions by shared account/device/merchant IDs and runs community detection to surface clusters with a high "fan-out" (many accounts, one device) and elevated risk — the actual signature of organized fraud.
+4. **Concept drift monitor** (`src/drift_monitor.py`) — Population Stability Index per feature between the frozen training distribution and a rolling window of live traffic, with industry-standard moderate/severe thresholds and a retrain-recommended flag.
+5. **LLM fraud investigation copilot** (`src/llm_copilot.py`) — not a chatbot; a one-shot report generator. Given a transaction's probability + SHAP drivers, it produces a short human-readable case note (via Groq/Llama 3.3 70B, free tier, default — or Anthropic as an alternative). Falls back to a deterministic template if no API key is set, so the whole system still runs for free.
+6. **Real-time stream simulation** (`src/stream_simulator.py`) — posts a live synthetic transaction feed (including planted fraud rings) to the running API, and resolves ground-truth feedback after a delay, so you can watch every subsystem react in real time without needing Kafka.
+7. **Calibrated probabilities** — `CalibratedClassifierCV` (Platt scaling) on top of XGBoost, so `fraud_probability` is a genuine probability, not just a ranking score.
+8. **Synthetic data generator with planted fraud rings** (`src/synthetic_data.py`) — since the public Kaggle dataset is PCA-anonymized with no entity keys, this generates a statistically similar dataset *with* account/device/merchant linkage and real planted rings, so the whole system is demoable out of the box, with no dataset download required.
 
----
+## Repo layout
+api/
+app.py                 FastAPI service (all endpoints)
+artifacts/             generated by train_pipeline.py — NOT committed to git
+dashboard/
+app.py                 Streamlit dashboard (5 tabs: Predict, Rings, Drift, Threshold, Investigate)
+src/
+synthetic_data.py      demo dataset generator with planted fraud rings
+models.py              all model definitions (LR, weighted LR, SMOTE, RF, XGBoost, IsolationForest)
+cost_optimization.py   cost-optimal threshold search + break-even probability
+explainability.py      SHAP wrapper (local + global explanations)
+adaptive_threshold.py  online-learning threshold engine
+graph_rings.py         fraud ring detector
+drift_monitor.py       PSI-based drift monitor
+llm_copilot.py         Groq/Claude investigation note generator
+train_pipeline.py      end-to-end training script -> writes api/artifacts/
+stream_simulator.py    live traffic simulator
+requirements.txt
+.gitignore
 
-## API — the core system
+## Setup
 
 ```bash
-POST /predict_fraud
-```
-
-**Request:**
-```json
-{
-  "Time": 0,
-  "Amount": 52000,
-  "V1": 0.01,
-  "V2": -0.03,
-  "V28": 0.14
-}
-```
-
-**Response:**
-```json
-{
-  "fraud_probability": 0.87,
-  "risk_level": "HIGH RISK",
-  "decision": "BLOCK"
-}
-```
-
-The Streamlit app is an **optional analyst interface** built on top of this API.  
-The FastAPI service is the core engine — production-first, UI-optional.
-
----
-
-## Dataset
-
-- Credit Card Fraud Dataset (UCI / Kaggle)
-- 284,807 transactions · 492 fraud cases · 0.17% fraud rate
-- PCA-anonymized features for privacy compliance
-- Dataset not included in this repo
-
----
-
-## Models
-
-| Model | Role |
-|---|---|
-| Logistic Regression | Baseline |
-| Weighted Logistic Regression | Cost-sensitive baseline |
-| Random Forest | High precision, conservative decisions |
-| XGBoost | Best recall–precision balance — primary model |
-| Isolation Forest | Unsupervised, novel fraud pattern detection |
-
----
-
-## Handling class imbalance
-
-- Class weighting on all models
-- SMOTE for experimentation
-- Imbalance-aware tree configurations
-- **Threshold tuning over label tuning** — the decision boundary is moved, not the data
-
----
-
-## Explainability (SHAP)
-
-- Global explanations — which features drive fraud across the dataset
-- Local explanations — why *this specific transaction* was flagged
-- Audit-ready output for regulated financial environments
-
----
-
-## Key design decisions
-
-**API-first, not dashboard-first** — real fraud systems are APIs consumed by banking infrastructure, not Streamlit apps. The UI is a demo layer.
-
-**Cost optimization over accuracy** — the threshold is selected by minimizing ₹ expected loss, not F1 score.
-
-**SHAP for every decision** — a fraud system without explainability cannot be deployed in regulated environments. Every BLOCK decision is justified.
-
-**Decoupled architecture** — training pipeline, inference API, and analyst UI are fully separated.
-
----
-
-## Stack
-
-`Python` `XGBoost` `scikit-learn` `imbalanced-learn` `SHAP` `FastAPI` `Streamlit` `Render`
-
----
-
-## Run locally
-
-```bash
-git clone https://github.com/AkashMs24/Cost-Sensitive-Real-Time-Fraud-Detection-Decision-System.git
+git clone <your-repo-url>
 cd Cost-Sensitive-Real-Time-Fraud-Detection-Decision-System
+python -m venv venv && source venv/bin/activate      # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn main:app --reload
 ```
 
----
+**(Optional)** Put the real Kaggle "Credit Card Fraud Detection" dataset at `data/raw/creditcard.csv` for a real-data run. If it's absent, the pipeline automatically uses the synthetic generator instead — no manual step needed.
 
-## What's next
+### 1. Train the model (generates api/artifacts/)
 
-- Real-time velocity features (transaction frequency, device fingerprinting)
-- Concept drift detection + automated retraining
-- Kafka streaming integration
-- Role-based analyst dashboards
+```bash
+python -m src.train_pipeline
+```
 
----
+### 2. Start the API
 
-## Related projects
+```bash
+uvicorn api.app:app --reload
+```
 
-- [Decision Intelligence System](https://github.com/AkashMs24/Decisioniq-ai-business-intelligence) — ML + LLM business intelligence platform
-- [Employee Attrition XAI](https://github.com/AkashMs24/Employee-Attrition-Risk-Assessment-Using-Explainable-Machine-Learning) — SHAP-powered HR risk scoring
-- [FarmVoice AI](https://github.com/AkashMs24/FarmVoice-AI) — NLP + SHAP crop advisory
+Visit `http://127.0.0.1:8000/docs` for interactive Swagger docs of every endpoint.
 
----
+### 3. Start the dashboard
 
-<div align="center">
+```bash
+export FRAUD_API_URL=http://127.0.0.1:8000   # Windows (PowerShell): $env:FRAUD_API_URL="http://127.0.0.1:8000"
+streamlit run dashboard/app.py
+```
 
-Built by **Akash M S** · Presidency University, Bengaluru  
-[LinkedIn](https://www.linkedin.com/in/akash-m-s-414a21297) · [GitHub](https://github.com/AkashMs24) · ms29akash@gmail.com
+### 4. (Optional) Enable the LLM copilot
 
-</div>
+The copilot works with **Groq (free tier, default)** or **Anthropic**. Without either key set, `/investigate/{id}` falls back to a template note — the rest of the system is completely unaffected either way.
+
+**Groq (free, recommended for a portfolio project):**
+1. Create a free account at https://console.groq.com and generate an API key under "API Keys".
+2. Add it as an environment variable before starting the API:
+```bash
+   export GROQ_API_KEY=gsk_...          # Windows (PowerShell): $env:GROQ_API_KEY="gsk_..."
+```
+
+**Anthropic (paid, optional alternative):**
+```bash
+export LLM_PROVIDER=anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Locally, the simplest approach is a `.env` file in the repo root (already git-ignored):
+GROQ_API_KEY=gsk_your_key_here
+and loading it with `python-dotenv`, or just `export`-ing it in your terminal before running `uvicorn`.
+
+On a hosting platform (Render, Railway, Streamlit Cloud), add it under that service's **Environment Variables / Secrets** settings in their dashboard — never commit the key to the repo.
+
+### 5. Watch it run live
+
+```bash
+python -m src.stream_simulator --rate 5 --duration 120
+```
+Then check the dashboard's Fraud Rings, Drift Monitor, and Adaptive Threshold tabs while it runs.
+
+## API reference
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/` | GET | health check |
+| `/predict_fraud` | POST | score a transaction, get decision + SHAP drivers |
+| `/feedback` | POST | submit ground-truth label for a past transaction (drives adaptive threshold) |
+| `/threshold/status` | GET | current adaptive threshold + history |
+| `/drift/status` | GET | PSI drift report |
+| `/fraud_rings` | GET | detected fraud rings, ranked by risk |
+| `/transactions/recent` | GET | recent transaction feed |
+| `/investigate/{transaction_id}` | POST | LLM (or template) investigation note |
+| `/ws/live` | WebSocket | live push of every decision as it happens |
+
+## Deploying
+
+- **API**: Render / Railway / Fly.io. Build command: `pip install -r requirements.txt && python -m src.train_pipeline`. Start command: `uvicorn api.app:app --host 0.0.0.0 --port $PORT`.
+- **Dashboard**: Streamlit Community Cloud or the same host. Set `FRAUD_API_URL` to your deployed API's URL.
+- Model artifacts are generated at build time (`api/artifacts/` is git-ignored) — don't commit the `.pkl` files; regenerate them on every deploy so the model, threshold, and reference stats always stay in sync.
+
+## Notes on the synthetic data
+
+The public Kaggle dataset has no account/device/merchant identifiers (it's PCA-anonymized for privacy), so fraud-ring detection cannot be demonstrated on it directly. `src/synthetic_data.py` generates a dataset with the same shape and class imbalance, plus a synthetic entity-linkage layer with several planted rings, so every feature in this system — including the graph detector — is demonstrable without requiring a real, sensitive, entity-linked banking dataset (which nobody publishes, for good reason). If you do have `data/raw/creditcard.csv`, the pipeline uses it for the model and only synthesizes the entity-linkage layer on top of it.
