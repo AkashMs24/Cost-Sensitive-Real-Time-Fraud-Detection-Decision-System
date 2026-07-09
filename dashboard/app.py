@@ -431,3 +431,178 @@ with tab_predict:
                 st.error(f"Failed: {err}")
             else:
                 st.success(f"Threshold updated to {res['updated_threshold']:.4f}")
+
+# ==============================
+# TAB 2 — FRAUD RINGS
+# ==============================
+with tab_rings:
+    st.markdown("<div class='section-label'>Graph-Based Fraud Ring Detection</div>", unsafe_allow_html=True)
+    st.caption(
+        "Transactions are linked in a graph by shared account/device/merchant IDs. "
+        "Community detection surfaces clusters where many accounts funnel through the same device or merchant — "
+        "the classic signature of an organized fraud ring rather than isolated incidents."
+    )
+    if st.button("🔄 Refresh Rings"):
+        st.rerun()
+
+    rings_data, err = api_get("/fraud_rings", top_k=10)
+    if err:
+        st.error(f"Couldn't load rings: {err}")
+    else:
+        stats = rings_data["graph_stats"]
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Transactions Tracked", stats["n_transactions_tracked"])
+        c2.metric("Graph Nodes", stats["n_graph_nodes"])
+        c3.metric("Graph Edges", stats["n_graph_edges"])
+
+        rings = rings_data["rings"]
+        if not rings:
+            st.info("No high-risk rings detected yet. Run the stream simulator (`python -m src.stream_simulator`) to generate live traffic, including planted rings.")
+        else:
+            for ring in rings:
+                risk_pct = ring["risk_score"]
+                pill = "pill-block" if risk_pct > 0.6 else "pill-review"
+                st.markdown(f"""
+                <div class='card card-danger'>
+                    <div style='display:flex; justify-content:space-between; align-items:center;'>
+                        <div style='font-family:Syne,sans-serif; font-weight:700;'>{ring['ring_id'].upper()}</div>
+                        <span class='decision-pill {pill}'>risk {risk_pct:.0%}</span>
+                    </div>
+                    <div style='font-size:0.85rem; color:#aaa; margin-top:0.5rem; line-height:1.7;'>
+                        {ring['n_transactions']} transactions across <strong>{ring['n_accounts']} accounts</strong>,
+                        funneled through <strong>{ring['n_devices']} device(s)</strong> and {ring['n_merchants']} merchant(s)
+                        — fan-out ratio {ring['fan_out_ratio']}.<br>
+                        Avg fraud probability: {ring['avg_fraud_probability']:.1%}<br>
+                        Shared devices: <code>{', '.join(ring['shared_devices'])}</code>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+# ==============================
+# TAB 3 — DRIFT MONITOR
+# ==============================
+with tab_drift:
+    st.markdown("<div class='section-label'>Concept / Data Drift Monitor</div>", unsafe_allow_html=True)
+    st.caption(
+        "Population Stability Index (PSI) between the training-time reference distribution and a rolling window "
+        "of live traffic. PSI < 0.10 = stable, 0.10–0.25 = moderate shift, ≥ 0.25 = severe — retrain recommended."
+    )
+    if st.button("🔄 Refresh Drift Status"):
+        st.rerun()
+
+    drift, err = api_get("/drift/status")
+    if err:
+        st.error(f"Couldn't load drift status: {err}")
+    elif drift.get("status") == "WARMING_UP":
+        st.info(drift["message"])
+    else:
+        status_color = {"STABLE": "#00e676", "MODERATE": "#ffb800", "SEVERE": "#ff4444"}.get(drift["status"], "#c8ff00")
+        st.markdown(f"""
+        <div style='text-align:center; padding: 1rem 0;'>
+            <div class='result-score' style='color:{status_color}; font-size:2.2rem;'>{drift['status']}</div>
+            <div class='result-label'>Overall Drift Status</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Transactions Seen", drift["n_seen"])
+        c2.metric("Features Moderate", drift["n_features_moderate"])
+        c3.metric("Retrain Recommended", "YES" if drift["retrain_recommended"] else "NO")
+
+        st.markdown("<div class='section-label'>Top Drifting Features</div>", unsafe_allow_html=True)
+        for feat in drift["top_drifting_features"]:
+            badge_color = {"STABLE": "pill-allow", "MODERATE": "pill-review", "SEVERE": "pill-block"}[feat["status"]]
+            st.markdown(
+                f"<div class='card' style='display:flex; justify-content:space-between; align-items:center; padding:0.7rem 1rem; margin-bottom:0.4rem;'>"
+                f"<span><strong>{feat['feature']}</strong> &nbsp; PSI = {feat['psi']}</span>"
+                f"<span class='decision-pill {badge_color}'>{feat['status']}</span></div>",
+                unsafe_allow_html=True,
+            )
+
+# ==============================
+# TAB 4 — ADAPTIVE THRESHOLD
+# ==============================
+with tab_threshold:
+    st.markdown("<div class='section-label'>Online-Learning Decision Threshold</div>", unsafe_allow_html=True)
+    st.caption(
+        "Instead of freezing one cost-optimal threshold forever, the system nudges it toward the direction that "
+        "would have minimized cost every time ground-truth feedback arrives (Robbins-Monro stochastic approximation)."
+    )
+    if st.button("🔄 Refresh Threshold Status"):
+        st.rerun()
+
+    thr, err = api_get("/threshold/status")
+    if err:
+        st.error(f"Couldn't load threshold status: {err}")
+    else:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Current Threshold", f"{thr['current_threshold']:.4f}")
+        c2.metric("Baseline (offline) Threshold", f"{thr['baseline_threshold']:.4f}")
+        c3.metric("Feedback Updates", thr["n_feedback_updates"])
+
+        c4, c5 = st.columns(2)
+        c4.metric("Cumulative Realized Cost", f"₹{thr['cumulative_realized_cost']:.0f}")
+        c5.metric("Savings vs. Frozen Threshold", f"₹{thr['savings_vs_frozen_threshold']:.0f}")
+
+        history = thr.get("history", [])
+        if len(history) > 1:
+            try:
+                import pandas as pd
+                hist_df = pd.DataFrame(history)
+                st.markdown("<div class='section-label'>Threshold Over Time</div>", unsafe_allow_html=True)
+                st.line_chart(hist_df.set_index("n_updates")["threshold"])
+            except Exception:
+                pass
+
+# ==============================
+# TAB 5 — INVESTIGATE (LLM COPILOT)
+# ==============================
+with tab_investigate:
+    st.markdown("<div class='section-label'>LLM Fraud Investigation Copilot</div>", unsafe_allow_html=True)
+    st.caption(
+        "Turns the model's probability + SHAP drivers into a short, human-readable investigation note for an analyst. "
+        "Falls back to a template if GROQ_API_KEY (or ANTHROPIC_API_KEY) isn't set on the API server."
+    )
+
+    inv_txn_id = st.text_input("Transaction ID to investigate", value=st.session_state.get("last_transaction_id", ""), key="inv_txn_id")
+    if st.button("🧑‍💼 Generate Investigation Note"):
+        if not inv_txn_id:
+            st.warning("Analyze a transaction in the Predict tab first, or paste a transaction ID.")
+        else:
+            note, err = api_post(f"/investigate/{inv_txn_id}")
+            if err:
+                st.error(f"Failed: {err}")
+            else:
+                source_badge = {"groq_api": "🤖 Groq API", "anthropic_api": "🤖 Claude API", "template_fallback": "📋 Template (no API key)", "template_fallback_after_error": "📋 Template (API error)"}.get(note.get("source"), note.get("source"))
+                st.markdown(f"""
+                <div class='card card-accent'>
+                    <div style='font-size:0.7rem; color:var(--muted); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:0.6rem;'>{source_badge}</div>
+                    <div style='font-size:0.92rem; line-height:1.7;'>{note['note']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    st.markdown("<div class='section-label'>Recent Transactions</div>", unsafe_allow_html=True)
+    recent, err = api_get("/transactions/recent", limit=10)
+    if not err and recent["transactions"]:
+        for t in recent["transactions"]:
+            pill_class = {"BLOCK": "pill-block", "REVIEW": "pill-review", "ALLOW": "pill-allow"}.get(t["decision"], "pill-allow")
+            label = "" if t["true_label"] is None else (" · confirmed FRAUD" if t["true_label"] == 1 else " · confirmed genuine")
+            st.markdown(
+                f"<div class='card' style='display:flex; justify-content:space-between; align-items:center; padding:0.6rem 1rem; margin-bottom:0.3rem;'>"
+                f"<span style='font-family:DM Mono,monospace; font-size:0.78rem;'>{t['transaction_id'][:8]}… · ₹{t['input']['Amount']:.2f}{label}</span>"
+                f"<span class='decision-pill {pill_class}'>{t['decision']} · {t['fraud_probability']:.0%}</span></div>",
+                unsafe_allow_html=True,
+            )
+
+# ==============================
+# FOOTER
+# ==============================
+
+st.markdown("""
+<hr>
+<div style='text-align:center; padding:1rem 0 0.5rem;'>
+    <div style='font-family:DM Mono,monospace; font-size:0.7rem; color:#333; letter-spacing:0.1em;'>
+        FRAUDSHIELD &nbsp;·&nbsp; v2.0 &nbsp;·&nbsp; Cost-Sensitive · Graph-Aware · Adaptive · LLM-Explained &nbsp;·&nbsp; Portfolio Demonstration
+    </div>
+</div>
+""", unsafe_allow_html=True)
