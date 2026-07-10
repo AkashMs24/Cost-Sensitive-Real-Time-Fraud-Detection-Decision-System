@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import uuid
@@ -6,7 +7,8 @@ from typing import Optional
 
 import joblib
 import pandas as pd
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from src.adaptive_threshold import AdaptiveThresholdEngine
@@ -23,6 +25,7 @@ RAW_MODEL_PATH = os.path.join(ARTIFACT_DIR, "fraud_model_raw.pkl")
 FEATURE_ORDER_PATH = os.path.join(ARTIFACT_DIR, "feature_order.json")
 THRESHOLD_PATH = os.path.join(ARTIFACT_DIR, "threshold.json")
 REFERENCE_SAMPLE_PATH = os.path.join(ARTIFACT_DIR, "reference_sample.csv")
+MODEL_COMPARISON_PATH = os.path.join(ARTIFACT_DIR, "model_comparison.json")
 
 if not os.path.exists(MODEL_PATH):
     raise RuntimeError(
@@ -35,6 +38,12 @@ with open(FEATURE_ORDER_PATH) as f:
     FEATURE_ORDER = json.load(f)
 with open(THRESHOLD_PATH) as f:
     threshold_meta = json.load(f)
+
+if os.path.exists(MODEL_COMPARISON_PATH):
+    with open(MODEL_COMPARISON_PATH) as f:
+        MODEL_COMPARISON = json.load(f)
+else:
+    MODEL_COMPARISON = None
 
 reference_sample = pd.read_csv(REFERENCE_SAMPLE_PATH)
 
@@ -49,7 +58,7 @@ ring_detector = FraudRingDetector()
 
 # in-memory transaction log (swap for a real DB in production)
 TRANSACTION_LOG = {}
-RECENT_FEED = deque(maxlen=200)
+RECENT_FEED = deque(maxlen=2000)
 
 
 class WSManager:
@@ -128,6 +137,42 @@ def _decide(fraud_probability: float, threshold: float):
         return "ALLOW", "LOW RISK"
 
 
+def _score_one(feature_values: dict, account_id: str, device_id: str, merchant_id: str,
+                raw_input: dict, log_and_broadcast: bool = True):
+    """
+    Shared scoring path used by /predict_fraud (one transaction from the form)
+    and /predict_batch (many rows from a CSV) -- guarantees a CSV-uploaded
+    transaction is scored, explained, ring-checked, and drift-monitored
+    exactly the same way a single live transaction would be.
+    """
+    row = pd.DataFrame([{field: feature_values.get(field, 0.0) for field in FEATURE_ORDER}])
+    fraud_probability = float(model.predict_proba(row)[:, 1][0])
+
+    threshold = threshold_engine.current_threshold()
+    decision, risk_level = _decide(fraud_probability, threshold)
+    top_features = explainer.explain_instance(row, top_k=5)
+
+    txn_id = str(uuid.uuid4())
+    record = {
+        "transaction_id": txn_id,
+        "input": raw_input,
+        "fraud_probability": fraud_probability,
+        "decision": decision,
+        "risk_level": risk_level,
+        "threshold_used": threshold,
+        "top_features": top_features,
+        "true_label": None,
+    }
+
+    if log_and_broadcast:
+        TRANSACTION_LOG[txn_id] = record
+        RECENT_FEED.append(record)
+        ring_detector.ingest(txn_id, account_id, device_id, merchant_id, fraud_probability, decision)
+        drift_monitor.ingest({field: feature_values.get(field, 0.0) for field in FEATURE_ORDER})
+
+    return record
+
+
 @app.get("/")
 def health_check():
     return {
@@ -140,39 +185,19 @@ def health_check():
 
 @app.post("/predict_fraud")
 async def predict_fraud(txn: Transaction):
-    row = pd.DataFrame([{field: getattr(txn, field) for field in FEATURE_ORDER}])
-    fraud_probability = float(model.predict_proba(row)[:, 1][0])
-
-    threshold = threshold_engine.current_threshold()
-    decision, risk_level = _decide(fraud_probability, threshold)
-
-    top_features = explainer.explain_instance(row, top_k=5)
-
-    txn_id = str(uuid.uuid4())
-    TRANSACTION_LOG[txn_id] = {
-        "transaction_id": txn_id,
-        "input": txn.model_dump(),
-        "fraud_probability": fraud_probability,
-        "decision": decision,
-        "risk_level": risk_level,
-        "threshold_used": threshold,
-        "top_features": top_features,
-        "true_label": None,
-    }
-    RECENT_FEED.append(TRANSACTION_LOG[txn_id])
-
-    ring_detector.ingest(
-        txn_id, txn.account_id, txn.device_id, txn.merchant_id, fraud_probability, decision
+    feature_values = {field: getattr(txn, field) for field in FEATURE_ORDER}
+    record = _score_one(
+        feature_values, txn.account_id, txn.device_id, txn.merchant_id,
+        raw_input=txn.model_dump(), log_and_broadcast=True,
     )
-    drift_monitor.ingest({field: getattr(txn, field) for field in FEATURE_ORDER})
 
     result = {
-        "transaction_id": txn_id,
-        "fraud_probability": round(fraud_probability, 4),
-        "risk_level": risk_level,
-        "decision": decision,
-        "threshold_used": round(threshold, 4),
-        "top_features": top_features,
+        "transaction_id": record["transaction_id"],
+        "fraud_probability": round(record["fraud_probability"], 4),
+        "risk_level": record["risk_level"],
+        "decision": record["decision"],
+        "threshold_used": round(record["threshold_used"], 4),
+        "top_features": record["top_features"],
     }
 
     await ws_manager.broadcast({"type": "transaction", "data": result})
@@ -211,6 +236,109 @@ def drift_status():
 @app.get("/fraud_rings")
 def fraud_rings(top_k: int = 10):
     return {"rings": ring_detector.detect_rings(top_k=top_k), "graph_stats": ring_detector.stats()}
+
+
+@app.post("/predict_batch")
+async def predict_batch(file: UploadFile = File(...)):
+    """
+    Score an uploaded CSV of transactions in one call. Expected columns:
+    Time, Amount, V1..V28 (required), account_id/device_id/merchant_id (optional).
+    Returns per-row results as JSON AND logs every row through the same
+    ring-detector/drift-monitor pipeline as live traffic, so a batch upload
+    can surface fraud rings too.
+    """
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Please upload a .csv file")
+
+    raw_bytes = await file.read()
+    try:
+        df = pd.read_csv(io.BytesIO(raw_bytes))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not parse CSV: {e}")
+
+    missing = [c for c in FEATURE_ORDER if c not in df.columns]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"CSV is missing required columns: {missing}")
+
+    if len(df) > 5000:
+        raise HTTPException(status_code=400, detail="Batch limit is 5000 rows per upload for this demo instance.")
+
+    results = []
+    for _, row in df.iterrows():
+        feature_values = {field: float(row[field]) for field in FEATURE_ORDER}
+        account_id = str(row.get("account_id", "BATCH_UNKNOWN_ACC"))
+        device_id = str(row.get("device_id", "BATCH_UNKNOWN_DEV"))
+        merchant_id = str(row.get("merchant_id", "BATCH_UNKNOWN_MER"))
+
+        record = _score_one(
+            feature_values, account_id, device_id, merchant_id,
+            raw_input={**feature_values, "account_id": account_id, "device_id": device_id, "merchant_id": merchant_id},
+            log_and_broadcast=True,
+        )
+        results.append({
+            "transaction_id": record["transaction_id"],
+            "account_id": account_id,
+            "Amount": feature_values["Amount"],
+            "fraud_probability": round(record["fraud_probability"], 4),
+            "decision": record["decision"],
+            "risk_level": record["risk_level"],
+        })
+
+    summary = {
+        "n_scored": len(results),
+        "n_block": sum(1 for r in results if r["decision"] == "BLOCK"),
+        "n_review": sum(1 for r in results if r["decision"] == "REVIEW"),
+        "n_allow": sum(1 for r in results if r["decision"] == "ALLOW"),
+    }
+
+    await ws_manager.broadcast({"type": "batch_scored", "data": summary})
+    return {"summary": summary, "results": results}
+
+
+@app.post("/predict_batch/download")
+async def predict_batch_download(file: UploadFile = File(...)):
+    """Same as /predict_batch, but returns a downloadable scored CSV instead of JSON."""
+    response = await predict_batch(file)
+    out_df = pd.DataFrame(response["results"])
+    buf = io.StringIO()
+    out_df.to_csv(buf, index=False)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=scored_transactions.csv"},
+    )
+
+
+@app.get("/models/comparison")
+def models_comparison():
+    if MODEL_COMPARISON is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No model_comparison.json artifact found. Re-run `python -m src.train_pipeline` "
+                   "with the current version of src/train_pipeline.py to generate it.",
+        )
+    return MODEL_COMPARISON
+
+
+@app.get("/transactions/history")
+def transactions_history(
+    decision: Optional[str] = None,
+    account_id: Optional[str] = None,
+    min_probability: float = 0.0,
+    limit: int = 200,
+):
+    """Full filterable transaction history, for the dashboard's History tab."""
+    items = list(RECENT_FEED)
+    if decision:
+        items = [t for t in items if t["decision"] == decision.upper()]
+    if account_id:
+        items = [t for t in items if account_id.lower() in str(t["input"].get("account_id", "")).lower()]
+    if min_probability > 0:
+        items = [t for t in items if t["fraud_probability"] >= min_probability]
+
+    items = list(reversed(items))[:limit]
+    return {"transactions": items, "total_matching": len(items)}
 
 
 @app.get("/transactions/recent")
