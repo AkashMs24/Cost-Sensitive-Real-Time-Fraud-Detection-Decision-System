@@ -1,0 +1,19 @@
+# FraudShield Dashboard — production container image.
+#
+# Build:  docker build -f Dockerfile.dashboard -t fraudshield-dashboard .
+# Run:    docker run -p 8501:8501 -e FRAUD_API_URL=http://api-host:8000 fraudshield-dashboard
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8501
+
+ENV PORT=8501
+
+CMD ["sh", "-c", "streamlit run dashboard/app.py --server.port ${PORT} --server.address 0.0.0.0"]
