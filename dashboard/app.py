@@ -492,7 +492,7 @@ with tab_batch:
         try:
             import pandas as pd
             results_df = pd.DataFrame(batch_result["results"]).sort_values("fraud_probability", ascending=False)
-            st.dataframe(results_df, use_container_width=True, height=400)
+            st.dataframe(results_df, width='stretch', height=400)
         except Exception:
             st.json(batch_result["results"][:20])
 
@@ -540,7 +540,7 @@ with tab_history:
                     "true_label": {1: "FRAUD", 0: "genuine", None: "—"}.get(t["true_label"], "—"),
                 })
             hist_df = pd.DataFrame(rows)
-            st.dataframe(hist_df, use_container_width=True, height=450)
+            st.dataframe(hist_df, width='stretch', height=450)
             csv_bytes = hist_df.to_csv(index=False).encode("utf-8")
             st.download_button("⬇️ Export filtered history as CSV", data=csv_bytes, file_name="transaction_history.csv", mime="text/csv")
         except Exception:
