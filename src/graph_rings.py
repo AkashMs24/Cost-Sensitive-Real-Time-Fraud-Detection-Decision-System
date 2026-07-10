@@ -42,19 +42,39 @@ class FraudRingDetector:
 
     def detect_rings(self, top_k: int = 10):
         """
-        Runs community detection over the entity graph and returns the
-        highest-risk clusters: groups of transactions that share
-        infrastructure (device/merchant) across multiple distinct accounts,
-        with an elevated average fraud probability.
+        A fraud ring is, by definition, a connected component in the entity
+        graph: every transaction reachable from another via a shared
+        account/device/merchant. We use connected components rather than
+        global modularity optimization -- modularity communities are
+        computed relative to the WHOLE graph's structure, so the same small
+        ring can get split apart or merged differently depending on
+        unrelated traffic elsewhere in the graph. Connected components give
+        a stable, topologically correct answer regardless of what else is
+        in the graph.
+
+        For the rare case of a single giant connected component (e.g. one
+        extremely common merchant links half of all traffic together),
+        we fall back to modularity communities WITHIN that component to
+        avoid treating "everyone who ever used Merchant X" as one ring.
         """
         if self.graph.number_of_nodes() == 0:
             return []
 
-        communities = nx.algorithms.community.greedy_modularity_communities(self.graph)
+        candidate_groups = []
+        for component in nx.connected_components(self.graph):
+            if len(component) > 200:
+                # unusually large component -- subdivide so one common
+                # merchant/device doesn't get treated as a single ring
+                subgraph = self.graph.subgraph(component)
+                candidate_groups.extend(
+                    nx.algorithms.community.greedy_modularity_communities(subgraph)
+                )
+            else:
+                candidate_groups.append(component)
 
         rings = []
-        for community in communities:
-            txn_ids = [n for n in community if n in self.txn_meta]
+        for group in candidate_groups:
+            txn_ids = [n for n in group if n in self.txn_meta]
             if len(txn_ids) < self.min_community_size:
                 continue
 
