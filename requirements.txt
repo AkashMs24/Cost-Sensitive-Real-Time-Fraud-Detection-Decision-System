@@ -10,4 +10,5 @@ networkx
 streamlit>=1.32.0
 requests
 joblib
+python-multipart
 altair==4.2.2
